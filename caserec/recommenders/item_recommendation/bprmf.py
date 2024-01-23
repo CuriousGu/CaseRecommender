@@ -15,6 +15,7 @@
 
 import random
 import numpy as np
+from tqdm import tqdm
 
 from caserec.recommenders.item_recommendation.base_item_recommendation import BaseItemRecommendation
 from caserec.utils.extra_functions import timed
@@ -144,20 +145,34 @@ class BprMF(BaseItemRecommendation):
         else:
             self.num_interactions = int(self.train_set['number_interactions'] / self.batch_size) + 1
 
-    def fit(self):
-        """
-        This method performs iterations of stochastic gradient ascent over the training data. One iteration is samples
-        number of positive entries in the training matrix times, if batch size is 0, else we divide the number of
-        positive entries per batch size (see in the init_model).
 
-        """
+def fit(self):
+    """
+    This method performs iterations of stochastic gradient ascent over the training data. One iteration is samples
+    number of positive entries in the training matrix times, if batch size is 0, else we divide the number of
+    positive entries per batch size (see in the init_model).
+    """
 
-        for n in range(self.epochs):
-            random_users = random.choices(self.train_set['users'], k=self.num_interactions)
-            for user in random_users:
-                i, j = self.sample_pair(user)
-                self.update_factors(self.user_to_user_id[user], self.item_to_item_id[i], self.item_to_item_id[j])
+    # Calculate the total number of iterations
+    total_iterations = self.epochs * self.num_interactions
 
+    # Create a progress bar
+    progress_bar = tqdm(total=total_iterations, desc="Fitting Model")
+
+    for epoch in range(self.epochs):
+        random_users = random.choices(self.train_set['users'], k=self.num_interactions)
+
+        for user in random_users:
+            i, j = self.sample_pair(user)
+            self.update_factors(self.user_to_user_id[user], self.item_to_item_id[i], self.item_to_item_id[j])
+
+            # Update the progress bar
+            progress_bar.update(1)
+
+    # Close the progress bar
+    progress_bar.close()
+
+    
     def create_factors(self):
         """
         This method create factors for users, items and bias
@@ -229,28 +244,29 @@ class BprMF(BaseItemRecommendation):
         self.q[i] += self.learn_rate * (u_f * eps - self.reg_i * i_f)
         self.q[j] += self.learn_rate * (-u_f * eps - self.reg_j * j_f)
 
-    def predict(self):
-        """
-        This method predict final result, building an rank of each user of the train set.
 
-        """
+def predict(self):
+    """
+    This method predicts the final result, building a rank of each user of the train set.
+    """
 
-        w = self.bias.T + np.dot(self.p, self.q.T)
+    w = self.bias.T + np.dot(self.p, self.q.T)
 
-        for u, user in enumerate(self.users):
-            partial_ranking = list()
-            candidate_items = sorted(range(len(w[u])), key=lambda k: w[u][k], reverse=True)
+    for u, user in enumerate(tqdm(self.users, desc="Predicting")):
+        partial_ranking = list()
+        candidate_items = sorted(range(len(w[u])), key=lambda k: w[u][k], reverse=True)
 
-            for i in candidate_items:
-                item = self.item_id_to_item[i]
+        for i in candidate_items:
+            item = self.item_id_to_item[i]
 
-                if item not in self.train_set['items_seen_by_user'].get(user, self.items):
-                    partial_ranking.append((user, item, w[u][i]))
+            if item not in self.train_set['items_seen_by_user'].get(user, self.items):
+                partial_ranking.append((user, item, w[u][i]))
 
-                if len(partial_ranking) == self.rank_length:
-                    break
+            if len(partial_ranking) == self.rank_length:
+                break
 
-            self.ranking += partial_ranking
+        self.ranking += partial_ranking
+
 
     def compute(self, verbose=True, metrics=None, verbose_evaluation=True, as_table=False, table_sep='\t'):
         """
